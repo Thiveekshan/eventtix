@@ -1,0 +1,13 @@
+workflow-aggregator
+git
+github
+junit
+credentials-binding
+timestamper
+ws-cleanup
+pipeline-stage-view
+email-ext
+htmlpublisher
+ansicolor
+sonar
+coverage

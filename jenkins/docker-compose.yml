@@ -1,0 +1,25 @@
+# Starts Jenkins:  docker compose up -d --build     then open http://localhost:8083
+name: eventtix-jenkins
+
+services:
+  jenkins:
+    build: .
+    image: eventtix-jenkins:lts
+    # Root lets Jenkins use the Docker socket. Fine on a personal computer; on a shared
+    # server you would use a dedicated build agent instead.
+    user: root
+    ports:
+      - "8083:8080"     # web interface
+      - "50000:50000"   # build agents (not used here)
+    volumes:
+      - jenkins_home:/var/jenkins_home                 # keeps jobs, settings and plugins
+      - /var/run/docker.sock:/var/run/docker.sock      # lets Jenkins control Docker Desktop
+    restart: unless-stopped
+
+# Test databases started by the pipeline join this network so Jenkins can reach them.
+networks:
+  default:
+    name: eventtix-ci
+
+volumes:
+  jenkins_home:
