@@ -24,6 +24,7 @@ pipeline {
     SONAR_HOST_URL    = 'http://sonarqube:9000'    // address inside the Docker network
     SONAR_PUBLIC_URL  = 'http://localhost:9000'    // address you open in a browser
     SONAR_PROJECT_KEY = 'eventtix'
+    TRIVY_IMAGE       = 'aquasec/trivy:0.74.0'     // pinned exact version, never "latest"
     PG_CONTAINER   = "pg-test-${env.BUILD_NUMBER}"
   }
 
@@ -47,14 +48,14 @@ pipeline {
         echo "Building version ${env.IMAGE_TAG} from commit ${env.GIT_SHORT}"
 
         sh '''
-          docker build \
+          docker build --pull \
             --tag "$BACKEND_IMAGE:$IMAGE_TAG" \
             --build-arg APP_VERSION="$APP_VERSION" \
             --build-arg BUILD_NUMBER="$BUILD_NUMBER" \
             --build-arg GIT_COMMIT="$GIT_SHORT" \
             backend
 
-          docker build \
+          docker build --pull \
             --tag "$FRONTEND_IMAGE:$IMAGE_TAG" \
             --build-arg APP_VERSION="$APP_VERSION" \
             frontend
@@ -139,6 +140,23 @@ pipeline {
 
           // Wait for the result and fail the build if the quality gate fails.
           sh 'sh scripts/sonar-quality-gate.sh'
+        }
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // 4. SECURITY: scan dependencies, the built images and the source code.
+    //    High or critical findings that can be fixed fail the build, unless they
+    //    are accepted in writing in security/accepted-risks.json.
+    // ------------------------------------------------------------------
+    stage('Security') {
+      steps {
+        sh 'sh scripts/security-scan.sh'
+        sh 'node scripts/security-gate.js'
+      }
+      post {
+        always {
+          archiveArtifacts artifacts: 'security-reports/**', allowEmptyArchive: true
         }
       }
     }

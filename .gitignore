@@ -17,3 +17,4 @@ reports/
 
 # SonarQube scanner work folder
 .scannerwork/
+security-reports/

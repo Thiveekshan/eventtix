@@ -22,6 +22,11 @@ LABEL org.opencontainers.image.title="eventtix-backend" \
       org.opencontainers.image.version=$APP_VERSION \
       org.opencontainers.image.revision=$GIT_COMMIT
 
+# The API only needs the "node" program. npm and yarn (and the libraries inside them) are only
+# used to install dependencies in the first stage, so they are removed: less software to patch.
+RUN rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx \
+           /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-*
+
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./

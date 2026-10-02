@@ -24,6 +24,9 @@ ENV BACKEND_URL=http://backend:3000
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 
+# The base image already runs as this unprivileged user; stating it makes that explicit and checkable.
+USER nginx
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
