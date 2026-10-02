@@ -200,6 +200,23 @@ pipeline {
         }
       }
     }
+
+    // ------------------------------------------------------------------
+    // 7. MONITORING AND ALERTING: deploy Prometheus, Alertmanager and Grafana, test their configuration
+    //    (including unit tests for the alert rules), prove they are watching production, and send the
+    //    team a notification through the same path real alerts use.
+    //    Dashboard http://localhost:3030, alerts http://localhost:9090/alerts
+    // ------------------------------------------------------------------
+    stage('Monitoring') {
+      when {
+        expression { env.GIT_BRANCH == 'origin/main' }
+      }
+      steps {
+        withCredentials([file(credentialsId: 'eventtix-monitoring-secrets', variable: 'SECRETS_FILE')]) {
+          sh 'sh scripts/monitoring-deploy.sh'
+        }
+      }
+    }
   }
 
   post {

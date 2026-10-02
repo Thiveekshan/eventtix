@@ -1,0 +1,101 @@
+# Alert rules for EventTix. Every rule says what is wrong, who it affects and what to do first.
+groups:
+  - name: eventtix-availability
+    rules:
+      - alert: EventTixApiDown
+        expr: up{job="eventtix-api"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "EventTix API is down ({{ $labels.environment }})"
+          description: "Prometheus has not been able to reach the API for over 30 seconds, so nobody can browse events or book tickets."
+          action: "Check 'docker ps' and 'docker logs eventtix-production-backend-1'. Restart with 'docker start eventtix-production-backend-1'."
+
+      - alert: EventTixDatabaseDown
+        expr: eventtix_database_up{job="eventtix-api"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "EventTix cannot reach its database ({{ $labels.environment }})"
+          description: "The API is running but its database connection has failed for over 30 seconds. Bookings and logins will fail."
+          action: "Check 'docker ps' for eventtix-production-db-1. Restart with 'docker start eventtix-production-db-1'."
+
+  - name: eventtix-errors-and-speed
+    rules:
+      - alert: EventTixHighErrorRate
+        # More than 5% of requests fail with a server error (HTTP 5xx), ignoring near-idle periods.
+        # Errors caused by a database outage are reported by EventTixDatabaseDown instead: this alert stays
+        # quiet while the database is down and for 2 minutes after, so recovery does not trigger a second alert.
+        expr: |
+          (
+            sum(rate(http_request_duration_seconds_count{job="eventtix-api",status_code=~"5.."}[2m]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="eventtix-api"}[2m]))
+          ) > 0.05
+          and
+          sum(rate(http_request_duration_seconds_count{job="eventtix-api"}[2m])) > 0.05
+          unless on()
+          (min_over_time(eventtix_database_up{job="eventtix-api"}[2m]) < 1)
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "More than 5% of EventTix requests are failing"
+          description: "{{ $value | humanizePercentage }} of requests returned a server error over the last 2 minutes."
+          action: "Look at the 'HTTP status codes' panel on the dashboard and run 'docker logs eventtix-production-backend-1'."
+
+      - alert: EventTixSlowResponses
+        # 95% of requests should finish within 1 second (health checks and metrics scrapes are ignored).
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket{job="eventtix-api",route!~"/metrics|/health"}[5m]))
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "EventTix is responding slowly"
+          description: "The slowest 5% of requests take more than {{ $value | humanizeDuration }}."
+          action: "Check the 'Response time' and 'Memory' panels, and whether the database is under load."
+
+  - name: eventtix-business
+    rules:
+      - alert: EventTixBookingFailureSpike
+        # Many failed booking attempts: a rush on sold-out events, a client bug, or someone probing the API.
+        expr: sum(rate(booking_failures_total{job="eventtix-api"}[2m])) > 0.5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Booking attempts are failing at an unusual rate"
+          description: "About {{ printf \"%.1f\" $value }} booking attempts per second are being rejected."
+          action: "Open 'Booking failures by reason' on the dashboard to see why they fail (sold_out, validation, not_found...)."
+
+      - alert: EventTixBookingServerErrors
+        # Rejected bookings are normal. Failures caused by the system itself are not.
+        # (Quiet during and just after a database outage, which EventTixDatabaseDown already reports.)
+        expr: |
+          sum(rate(booking_failures_total{job="eventtix-api",reason="server_error"}[2m])) > 0
+          unless on()
+          (min_over_time(eventtix_database_up{job="eventtix-api"}[2m]) < 1)
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Bookings are failing because of a system error"
+          description: "Booking attempts are failing with server errors, not because of user mistakes."
+          action: "Run 'docker logs eventtix-production-backend-1' and look for entries with level \"error\"."
+
+  - name: eventtix-resources
+    rules:
+      - alert: EventTixHighMemory
+        expr: process_resident_memory_bytes{job="eventtix-api"} > 400 * 1024 * 1024
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "EventTix API is using a lot of memory"
+          description: "The API process uses {{ $value | humanize1024 }}B of memory (limit for this alert: 400 MiB)."
+          action: "Check the 'Memory' panel for steady growth, which suggests a leak. Restart the container if needed."

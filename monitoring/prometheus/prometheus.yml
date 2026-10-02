@@ -1,0 +1,33 @@
+# Prometheus: collects the production API's metrics every 5 seconds and evaluates the alert rules.
+global:
+  scrape_interval: 5s
+  scrape_timeout: 4s
+  evaluation_interval: 5s
+  external_labels:
+    system: eventtix
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # The production API. Prometheus is attached to the production Docker network and reaches the
+  # container by name, so it keeps working when the container is replaced by a new release.
+  - job_name: eventtix-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["eventtix-production-backend-1:3000"]
+        labels:
+          environment: production
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]

@@ -1,0 +1,272 @@
+# Unit tests for the alert rules. Run with:  promtool test rules alerts.test.yml
+# Each test feeds fake metric data to the rules and checks which alerts fire, and when.
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 15s
+
+tests:
+  # ---------------------------------------------------------------------------
+  - name: API down fires after 30 seconds, and clears when the API returns
+    interval: 15s
+    input_series:
+      - series: 'up{job="eventtix-api",environment="production",instance="api:3000"}'
+        values: '1 1 1 0 0 0 0 0 0 1 1 1'
+    alert_rule_test:
+      - eval_time: 45s      # just went down: not firing yet (needs 30 seconds)
+        alertname: EventTixApiDown
+        exp_alerts: []
+      - eval_time: 105s     # down for over 30 seconds
+        alertname: EventTixApiDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: eventtix-api
+              environment: production
+              instance: "api:3000"
+            exp_annotations:
+              summary: "EventTix API is down (production)"
+              description: "Prometheus has not been able to reach the API for over 30 seconds, so nobody can browse events or book tickets."
+              action: "Check 'docker ps' and 'docker logs eventtix-production-backend-1'. Restart with 'docker start eventtix-production-backend-1'."
+      - eval_time: 165s     # back up
+        alertname: EventTixApiDown
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  - name: Database down fires only after the connection has been lost for 30 seconds
+    interval: 15s
+    input_series:
+      - series: 'eventtix_database_up{job="eventtix-api",environment="production",instance="api:3000"}'
+        values: '1 1 1 0 0 0 0 0 1 1'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: EventTixDatabaseDown
+        exp_alerts: []
+      - eval_time: 105s
+        alertname: EventTixDatabaseDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: eventtix-api
+              environment: production
+              instance: "api:3000"
+            exp_annotations:
+              summary: "EventTix cannot reach its database (production)"
+              description: "The API is running but its database connection has failed for over 30 seconds. Bookings and logins will fail."
+              action: "Check 'docker ps' for eventtix-production-db-1. Restart with 'docker start eventtix-production-db-1'."
+      - eval_time: 150s     # database is back
+        alertname: EventTixDatabaseDown
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  - name: High error rate fires when over 5 percent of requests fail
+    interval: 15s
+    input_series:
+      # 10 good requests and 5 failures every 15 seconds: one third of requests fail
+      - series: 'http_request_duration_seconds_count{job="eventtix-api",status_code="200",route="/events",method="GET"}'
+        values: '0+10x40'
+      - series: 'http_request_duration_seconds_count{job="eventtix-api",status_code="500",route="/events",method="GET"}'
+        values: '0+5x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: EventTixHighErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "More than 5% of EventTix requests are failing"
+              description: "33.33% of requests returned a server error over the last 2 minutes."
+              action: "Look at the 'HTTP status codes' panel on the dashboard and run 'docker logs eventtix-production-backend-1'."
+
+  - name: High error rate stays quiet when the errors are explained by a database outage (even after it ends)
+    interval: 15s
+    input_series:
+      - series: 'http_request_duration_seconds_count{job="eventtix-api",status_code="200",route="/events",method="GET"}'
+        values: '0+10x80'
+      - series: 'http_request_duration_seconds_count{job="eventtix-api",status_code="500",route="/events",method="GET"}'
+        values: '0+10x80'
+      # database goes down at 1m, comes back at 4m
+      - series: 'eventtix_database_up{job="eventtix-api",environment="production",instance="api:3000"}'
+        values: '1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 3m       # during the outage: DatabaseDown owns this problem
+        alertname: EventTixHighErrorRate
+        exp_alerts: []
+      - eval_time: 5m       # 1 minute after recovery: the 2 minute tail is still covered
+        alertname: EventTixHighErrorRate
+        exp_alerts: []
+
+  - name: High error rate still fires when the database is healthy but requests fail anyway
+    interval: 15s
+    input_series:
+      - series: 'http_request_duration_seconds_count{job="eventtix-api",status_code="200",route="/events",method="GET"}'
+        values: '0+10x80'
+      - series: 'http_request_duration_seconds_count{job="eventtix-api",status_code="500",route="/events",method="GET"}'
+        values: '0+10x80'
+      - series: 'eventtix_database_up{job="eventtix-api",environment="production",instance="api:3000"}'
+        values: '1x80'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: EventTixHighErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "More than 5% of EventTix requests are failing"
+              description: "50% of requests returned a server error over the last 2 minutes."
+              action: "Look at the 'HTTP status codes' panel on the dashboard and run 'docker logs eventtix-production-backend-1'."
+
+  - name: High error rate stays quiet when only a tiny share of requests fail
+    interval: 15s
+    input_series:
+      # 1 failure per 100 requests = 1 percent
+      - series: 'http_request_duration_seconds_count{job="eventtix-api",status_code="200",route="/events",method="GET"}'
+        values: '0+99x40'
+      - series: 'http_request_duration_seconds_count{job="eventtix-api",status_code="500",route="/events",method="GET"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: EventTixHighErrorRate
+        exp_alerts: []
+
+  - name: High error rate stays quiet when the site is idle (a few errors on almost no traffic)
+    interval: 15s
+    input_series:
+      - series: 'http_request_duration_seconds_count{job="eventtix-api",status_code="200",route="/events",method="GET"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+      - series: 'http_request_duration_seconds_count{job="eventtix-api",status_code="500",route="/events",method="GET"}'
+        values: '0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: EventTixHighErrorRate
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  - name: Slow responses fire when the slowest 5 percent take over a second
+    interval: 15s
+    input_series:
+      # every request takes between 1 and 2.5 seconds
+      - series: 'http_request_duration_seconds_bucket{job="eventtix-api",route="/events",le="0.5"}'
+        values: '0x80'
+      - series: 'http_request_duration_seconds_bucket{job="eventtix-api",route="/events",le="1"}'
+        values: '0x80'
+      - series: 'http_request_duration_seconds_bucket{job="eventtix-api",route="/events",le="2.5"}'
+        values: '0+10x80'
+      - series: 'http_request_duration_seconds_bucket{job="eventtix-api",route="/events",le="+Inf"}'
+        values: '0+10x80'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: EventTixSlowResponses
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "EventTix is responding slowly"
+              description: "The slowest 5% of requests take more than 2.425s."
+              action: "Check the 'Response time' and 'Memory' panels, and whether the database is under load."
+
+  - name: Slow responses stay quiet when requests are fast
+    interval: 15s
+    input_series:
+      - series: 'http_request_duration_seconds_bucket{job="eventtix-api",route="/events",le="0.05"}'
+        values: '0+10x80'
+      - series: 'http_request_duration_seconds_bucket{job="eventtix-api",route="/events",le="1"}'
+        values: '0+10x80'
+      - series: 'http_request_duration_seconds_bucket{job="eventtix-api",route="/events",le="+Inf"}'
+        values: '0+10x80'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: EventTixSlowResponses
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  - name: Booking failure spike fires at about one rejected booking per second
+    interval: 15s
+    input_series:
+      - series: 'booking_failures_total{job="eventtix-api",reason="validation"}'
+        values: '0+15x40'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: EventTixBookingFailureSpike
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Booking attempts are failing at an unusual rate"
+              description: "About 1.0 booking attempts per second are being rejected."
+              action: "Open 'Booking failures by reason' on the dashboard to see why they fail (sold_out, validation, not_found...)."
+
+  - name: Booking failure spike stays quiet for the odd rejected booking
+    interval: 15s
+    input_series:
+      - series: 'booking_failures_total{job="eventtix-api",reason="sold_out"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: EventTixBookingFailureSpike
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  - name: Server-error booking failures fire even at a low rate, but user mistakes do not
+    interval: 15s
+    input_series:
+      - series: 'booking_failures_total{job="eventtix-api",reason="server_error"}'
+        values: '0 0 0 0 1 1 2 2 3 3 4 4 5 5 6 6 7 7 8 8'
+      - series: 'booking_failures_total{job="eventtix-api",reason="validation"}'
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: EventTixBookingServerErrors
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "Bookings are failing because of a system error"
+              description: "Booking attempts are failing with server errors, not because of user mistakes."
+              action: "Run 'docker logs eventtix-production-backend-1' and look for entries with level \"error\"."
+
+  - name: Booking server-error alert stays quiet while the database is down (that is reported separately)
+    interval: 15s
+    input_series:
+      - series: 'booking_failures_total{job="eventtix-api",reason="server_error"}'
+        values: '0+3x40'
+      - series: 'eventtix_database_up{job="eventtix-api",environment="production",instance="api:3000"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: EventTixBookingServerErrors
+        exp_alerts: []
+
+  - name: Booking server-error alert stays quiet when only user mistakes are rejected
+    interval: 15s
+    input_series:
+      - series: 'booking_failures_total{job="eventtix-api",reason="server_error"}'
+        values: '0x40'
+      - series: 'booking_failures_total{job="eventtix-api",reason="validation"}'
+        values: '0+3x40'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: EventTixBookingServerErrors
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  - name: High memory fires after 5 minutes above 400 MiB
+    interval: 15s
+    input_series:
+      - series: 'process_resident_memory_bytes{job="eventtix-api",instance="api:3000"}'
+        values: '500000000x60'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: EventTixHighMemory
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: EventTixHighMemory
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: eventtix-api
+              instance: "api:3000"
+            exp_annotations:
+              summary: "EventTix API is using a lot of memory"
+              description: "The API process uses 476.8MiB of memory (limit for this alert: 400 MiB)."
+              action: "Check the 'Memory' panel for steady growth, which suggests a leak. Restart the container if needed."

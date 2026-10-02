@@ -50,6 +50,35 @@ describe('system endpoints', () => {
     expect(res.text).toContain('process_cpu_user_seconds_total');
   });
 
+  test('eventtix_database_up is 1 while the database is reachable', async () => {
+    const res = await request(app).get('/metrics').expect(200);
+    expect(res.text).toMatch(/^eventtix_database_up\{[^}]*\} 1$/m);
+  });
+
+  test('eventtix_database_up drops to 0 when the database cannot be reached (this is what the alert watches)', async () => {
+    const original = db.checkConnection;
+    db.checkConnection = async () => false;
+    try {
+      const res = await request(app).get('/metrics').expect(200);
+      expect(res.text).toMatch(/^eventtix_database_up\{[^}]*\} 0$/m);
+    } finally {
+      db.checkConnection = original;
+    }
+  });
+
+  test('a database check that hangs is reported as down instead of hanging the scrape', async () => {
+    const original = db.checkConnection;
+    db.checkConnection = () => new Promise(() => {});   // never answers
+    try {
+      const started = Date.now();
+      const res = await request(app).get('/metrics').expect(200);
+      expect(res.text).toMatch(/^eventtix_database_up\{[^}]*\} 0$/m);
+      expect(Date.now() - started).toBeLessThan(5000);
+    } finally {
+      db.checkConnection = original;
+    }
+  });
+
   test('unknown routes return a JSON 404', async () => {
     const res = await request(app).get('/nope').expect(404);
     expect(res.body).toEqual({ error: 'Not found' });

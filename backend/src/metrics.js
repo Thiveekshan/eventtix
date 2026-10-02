@@ -2,6 +2,8 @@
 
 const client = require('prom-client');
 
+const db = require('./db');
+
 const register = new client.Registry();
 register.setDefaultLabels({ app: 'eventtix-api' });
 
@@ -47,8 +49,34 @@ const httpRequestDuration = new client.Histogram({
   registers: [register],
 });
 
+// 1 when the API can reach its database, 0 when it cannot. Checked on every scrape, so an alert on
+// "eventtix_database_up == 0" fires from a real measurement, not a guess.
+const DATABASE_CHECK_TIMEOUT_MS = 2000;
+
+async function databaseIsReachable() {
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(false), DATABASE_CHECK_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([db.checkConnection(), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const databaseUp = new client.Gauge({
+  name: 'eventtix_database_up',
+  help: '1 if the API can reach its database, 0 if it cannot',
+  registers: [register],
+  async collect() {
+    this.set((await databaseIsReachable()) ? 1 : 0);
+  },
+});
+
 module.exports = {
   register,
+  databaseUp,
   bookingsCreated,
   bookingsCancelled,
   bookingFailures,

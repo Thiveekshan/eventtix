@@ -1,0 +1,29 @@
+# Alertmanager: decides which alerts are sent to the team, and groups them so the team is not flooded.
+global:
+  resolve_timeout: 2m
+
+route:
+  receiver: team
+  group_by: ["alertname", "environment"]
+  group_wait: 5s          # wait briefly so related alerts arrive together
+  group_interval: 30s     # how soon new alerts in a group are sent
+  repeat_interval: 1h     # remind about a still-firing alert every hour
+  routes:
+    - matchers:
+        - severity="critical"
+      receiver: team
+      repeat_interval: 30m
+
+# A root cause silences the alerts it causes, so the team gets one clear message instead of five.
+inhibit_rules:
+  - source_matchers:
+      - alertname="EventTixApiDown"
+    target_matchers:
+      - alertname=~"EventTix(DatabaseDown|HighErrorRate|SlowResponses|BookingFailureSpike|BookingServerErrors)"
+  - source_matchers:
+      - alertname="EventTixDatabaseDown"
+    target_matchers:
+      - alertname=~"EventTix(HighErrorRate|BookingServerErrors)"
+
+receivers:
+  - name: team

@@ -1,0 +1,83 @@
+# The monitoring stack: Prometheus (collects metrics and checks the alert rules), Alertmanager (sends the
+# alerts to the team) and Grafana (the dashboard). Deployed by the pipeline's Monitoring stage.
+#
+#   Grafana      http://localhost:3030   (user "admin", password from the monitoring secret file)
+#   Prometheus   http://localhost:9090   (alerts: http://localhost:9090/alerts)
+#   Alertmanager http://localhost:9093
+#
+# Prometheus joins the production network so it can reach the production API by its container name.
+services:
+  prometheus:
+    build: ./prometheus
+    image: eventtix-prometheus:${IMAGE_TAG:?IMAGE_TAG is missing}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.external-url=http://localhost:9090
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus-data:/prometheus
+    networks:
+      - default
+      - production
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  alertmanager:
+    build: ./alertmanager
+    image: eventtix-alertmanager:${IMAGE_TAG}
+    environment:
+      # Optional. Empty means alerts are only shown in the web interfaces.
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+    ports:
+      - "9093:9093"
+    volumes:
+      - alertmanager-data:/alertmanager
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9093/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  grafana:
+    build: ./grafana
+    image: eventtix-grafana:${IMAGE_TAG}
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is missing}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_SERVER_ROOT_URL: http://localhost:3030
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/eventtix-production.json
+    ports:
+      - "3030:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 18
+    restart: unless-stopped
+
+networks:
+  # Created by the Release stage when production is deployed.
+  production:
+    external: true
+    name: eventtix-production_default
+
+volumes:
+  prometheus-data:
+  alertmanager-data:
+  grafana-data:
