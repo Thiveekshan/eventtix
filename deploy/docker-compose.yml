@@ -1,0 +1,59 @@
+# One environment (staging or production) of EventTix, described as code.
+# Used by the pipeline:  docker compose -p eventtix-<environment> --env-file deploy/<environment>.env ... up -d
+#
+# Settings that differ per environment (ports, name, demo data) live in deploy/<environment>.env.
+# Secrets (passwords, signing key) are NOT in the repository: Jenkins supplies them from a secret file.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: eventtix
+      POSTGRES_USER: eventtix
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is missing}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eventtix -d eventtix"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    image: eventtix-backend:${IMAGE_TAG:?IMAGE_TAG is missing}
+    pull_policy: never          # use the image Jenkins just built on this machine
+    environment:
+      NODE_ENV: production
+      APP_ENV: ${APP_ENV:?APP_ENV is missing}
+      DATABASE_URL: postgres://eventtix:${POSTGRES_PASSWORD}@db:5432/eventtix
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is missing}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${BACKEND_PORT:?BACKEND_PORT is missing}:3000"
+    labels:
+      eventtix.environment: ${APP_ENV}
+    restart: unless-stopped
+
+  frontend:
+    image: eventtix-frontend:${IMAGE_TAG}
+    pull_policy: never
+    environment:
+      BACKEND_URL: http://backend:3000
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:?FRONTEND_PORT is missing}:8080"
+    labels:
+      eventtix.environment: ${APP_ENV}
+    restart: unless-stopped
+
+volumes:
+  db-data:

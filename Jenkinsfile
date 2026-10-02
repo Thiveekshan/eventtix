@@ -160,6 +160,19 @@ pipeline {
         }
       }
     }
+
+    // ------------------------------------------------------------------
+    // 5. DEPLOY: start this build in the staging environment (infrastructure as code),
+    //    smoke test it, and roll back to the previous version if the test fails.
+    //    Staging: web app http://localhost:8081, API http://localhost:3001
+    // ------------------------------------------------------------------
+    stage('Deploy') {
+      steps {
+        withCredentials([file(credentialsId: 'eventtix-staging-secrets', variable: 'SECRETS_FILE')]) {
+          sh 'sh scripts/deploy.sh staging'
+        }
+      }
+    }
   }
 
   post {
