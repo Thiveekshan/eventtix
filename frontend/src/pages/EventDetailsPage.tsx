@@ -101,13 +101,15 @@ export default function EventDetailsPage({ id }: { id: string }) {
               }}
             >
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">Quantity</label>
+                <label htmlFor="ticket-quantity" className="text-sm font-medium">
+                  Quantity
+                </label>
                 <Select
                   value={String(qty)}
                   onValueChange={(v) => setQuantity(Number(v))}
                   disabled={disabled}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="ticket-quantity">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

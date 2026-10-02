@@ -30,6 +30,16 @@ if [ "$code" = "200" ]; then
 fi
 call POST /api/qualitygates/create --data-urlencode "name=$GATE_NAME" >/dev/null
 
+# SonarQube pre-fills every new gate with its default "new code" conditions.
+# Remove them, so that only the conditions listed below apply.
+default_ids=$(call GET /api/qualitygates/show -G --data-urlencode "name=$GATE_NAME" | node -e "
+let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{
+  for (const c of JSON.parse(s).conditions||[]) console.log(c.id);
+})")
+for condition_id in $default_ids; do
+  call POST /api/qualitygates/delete_condition --data-urlencode "id=$condition_id" >/dev/null
+done
+
 # Each line is:  metric | operator | threshold.  The gate FAILS when the condition is true.
 #   LT = fails if the value is Less Than the threshold     (e.g. coverage under 80%)
 #   GT = fails if the value is Greater Than the threshold  (e.g. duplication over 3%)

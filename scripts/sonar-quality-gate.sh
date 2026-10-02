@@ -57,7 +57,34 @@ echo
 echo "Dashboard: $PUBLIC_URL/dashboard?id=$PROJECT_KEY"
 if [ "$result" = "OK" ]; then
   echo "QUALITY GATE PASSED"
-else
-  echo "QUALITY GATE FAILED (status: ${result:-unknown})" >&2
-  exit 1
+  exit 0
 fi
+
+# 3. The gate failed: show the bugs and vulnerabilities behind it, so they are easy to find and fix.
+# (Two query styles, because older and newer SonarQube versions name these filters differently.)
+issues=$(call GET /api/issues/search -G \
+    --data-urlencode "componentKeys=$PROJECT_KEY" \
+    --data-urlencode "impactSoftwareQualities=RELIABILITY,SECURITY" \
+    --data-urlencode "issueStatuses=OPEN,CONFIRMED" \
+    --data-urlencode "ps=30" 2>/dev/null) ||
+  issues=$(call GET /api/issues/search -G \
+    --data-urlencode "componentKeys=$PROJECT_KEY" \
+    --data-urlencode "types=BUG,VULNERABILITY" \
+    --data-urlencode "resolved=false" \
+    --data-urlencode "ps=30" 2>/dev/null) || issues=""
+
+echo
+echo "Reliability and security issues to fix:"
+printf '%s' "$issues" | node -e "
+let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{
+  let list=[];try{list=JSON.parse(s).issues||[]}catch(e){}
+  if (!list.length) { console.log('  (could not list them here: open the dashboard link above and use the Issues tab)'); return; }
+  for (const i of list) {
+    const file=String(i.component).split(':').slice(1).join(':');
+    console.log('  ['+i.severity+'] '+file+':'+(i.line||'?')+'  '+i.message+'  ('+i.rule+')');
+  }
+})"
+
+echo
+echo "QUALITY GATE FAILED (status: ${result:-unknown})" >&2
+exit 1
