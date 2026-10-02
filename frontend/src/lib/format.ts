@@ -6,7 +6,7 @@ export const formatPrice = (n: number) =>
 
 export const formatDate = (iso: string) => {
   const d = new Date(iso);
-  return isNaN(d.getTime())
+  return Number.isNaN(d.getTime())
     ? iso
     : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 };
