@@ -26,7 +26,13 @@ ENV BACKEND_URL=http://backend:3000
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# The base image already runs as this unprivileged user; stating it makes that explicit and checkable.
+# One library in the base image (pcre2, used by nginx for regular expressions) has a published
+# security fix that the base image does not include yet. Upgrade just that package.
+# Remove these two lines once the base image ships pcre2 10.49 or newer.
+USER root
+RUN apk upgrade --no-cache pcre2
+
+# The base image runs as this unprivileged user; stating it makes that explicit and checkable.
 USER nginx
 
 EXPOSE 8080
