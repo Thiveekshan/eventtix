@@ -14,8 +14,9 @@ A bad release must never reach production. This demonstrates it with one click.
 2. In Jenkins, click **Build with Parameters**, tick **SIMULATE_BAD_RELEASE**, and click **Build**.
 3. Watch the build. It passes Build, Test, Code Quality and Security, then in **Deploy**:
    - the log says `SIMULATION: the new version will start with its JWT secret missing`
-   - the new backend cannot boot, so the containers never become healthy
-   - after about 75 seconds: `DEPLOYMENT FAILED`, then `ROLLING BACK to version ...`, then `ROLLED BACK: staging is running version ... again and is healthy`
+   - the new backend crashes on start with the real error `Missing required environment variable: JWT_SECRET`, and Docker reports it unhealthy within a few seconds
+   - `DEPLOYMENT FAILED`, then `ROLLING BACK to version ...`, then the smoke test runs on the restored version, and finally `ROLLED BACK: staging is running version ... again and is healthy`
+   - the whole cycle takes about 15 seconds
 4. **Release and Monitoring are skipped**, so production and the GitHub release are untouched.
 5. Prove it: open http://localhost:3001/version. It still reports the *previous* build number, and http://localhost:8081 still works.
 
