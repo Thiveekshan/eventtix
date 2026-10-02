@@ -1,6 +1,7 @@
 # Starts the CI tools:  docker compose up -d --build
 #   Jenkins    http://localhost:8083
 #   SonarQube  http://localhost:9000   (first start takes 1-2 minutes)
+#   Registry   localhost:5000          (stores released images)
 name: eventtix-jenkins
 
 services:
@@ -38,6 +39,16 @@ services:
       - "9000:9000"
     restart: unless-stopped
 
+  # Stores every released version of the application images (the "artifact storage").
+  # Inside the CI network it is http://registry:5000; on this computer it is localhost:5000.
+  registry:
+    image: registry:2
+    ports:
+      - "5000:5000"
+    volumes:
+      - registry_data:/var/lib/registry
+    restart: unless-stopped
+
   sonar-db:
     image: postgres:16-alpine
     environment:
@@ -64,3 +75,4 @@ volumes:
   sonarqube_extensions:
   sonarqube_logs:
   sonar_db_data:
+  registry_data:

@@ -173,6 +173,33 @@ pipeline {
         }
       }
     }
+
+    // ------------------------------------------------------------------
+    // 6. RELEASE: a build that reached this point passed every check, so it is released:
+    //    the images are stored in the registry, the commit is tagged in Git, a GitHub release is
+    //    published, and the same images are deployed to production (smoke test + rollback included).
+    //    Production: web app http://localhost:8082, API http://localhost:3002
+    // ------------------------------------------------------------------
+    stage('Release') {
+      when {
+        expression { env.GIT_BRANCH == 'origin/main' }    // only the main branch is ever released
+      }
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'github-credentials',
+                                          usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
+          sh 'sh scripts/release.sh'
+        }
+        withCredentials([file(credentialsId: 'eventtix-production-secrets', variable: 'SECRETS_FILE')]) {
+          sh 'sh scripts/deploy.sh production'
+        }
+        sh 'echo "deployed_to_production=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> release-info.txt'
+      }
+      post {
+        always {
+          archiveArtifacts artifacts: 'release-info.txt', allowEmptyArchive: true
+        }
+      }
+    }
   }
 
   post {

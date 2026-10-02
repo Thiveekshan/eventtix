@@ -21,8 +21,10 @@ services:
     restart: unless-stopped
 
   backend:
-    image: eventtix-backend:${IMAGE_TAG:?IMAGE_TAG is missing}
-    pull_policy: never          # use the image Jenkins just built on this machine
+    # IMAGE_PREFIX is empty for staging (the image Jenkins just built on this machine) and the
+    # registry address for production (the stored release artifact).
+    image: ${IMAGE_PREFIX:-}eventtix-backend:${IMAGE_TAG:?IMAGE_TAG is missing}
+    pull_policy: ${PULL_POLICY:-never}
     environment:
       NODE_ENV: production
       APP_ENV: ${APP_ENV:?APP_ENV is missing}
@@ -42,8 +44,8 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: eventtix-frontend:${IMAGE_TAG}
-    pull_policy: never
+    image: ${IMAGE_PREFIX:-}eventtix-frontend:${IMAGE_TAG}
+    pull_policy: ${PULL_POLICY:-never}
     environment:
       BACKEND_URL: http://backend:3000
     depends_on:
