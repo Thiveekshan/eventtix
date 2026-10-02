@@ -1,5 +1,5 @@
 // EventTix CI/CD pipeline.
-// Stages are added one at a time: Build, Test, Code Quality, Security, Deploy, Release, Monitoring.
+// Stages: Build, Test, Code Quality, Security, Deploy, Release, Monitoring (added one at a time).
 
 pipeline {
   agent any
@@ -21,6 +21,9 @@ pipeline {
     BACKEND_IMAGE  = 'eventtix-backend'
     FRONTEND_IMAGE = 'eventtix-frontend'
     CI_NETWORK     = 'eventtix-ci'
+    SONAR_HOST_URL    = 'http://sonarqube:9000'    // address inside the Docker network
+    SONAR_PUBLIC_URL  = 'http://localhost:9000'    // address you open in a browser
+    SONAR_PROJECT_KEY = 'eventtix'
     PG_CONTAINER   = "pg-test-${env.BUILD_NUMBER}"
   }
 
@@ -104,6 +107,38 @@ pipeline {
             sourceCodeRetention: 'NEVER'
           )
           sh 'docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true'
+        }
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // 3. CODE QUALITY: front end checks, then SonarQube analysis with a
+    //    quality gate. The build fails if the gate fails.
+    // ------------------------------------------------------------------
+    stage('Code Quality') {
+      steps {
+        // Quick checks on the web app: types, then lint (style and common mistakes).
+        dir('frontend') {
+          sh 'npm ci --no-audit --no-fund'
+          sh 'npm run typecheck'
+          sh 'npm run lint'
+        }
+
+        withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+          // Create the project and quality gate in SonarQube if needed (gate as code).
+          sh 'sh scripts/sonar-setup.sh'
+
+          // Jest writes coverage paths relative to backend/. SonarQube needs them from the repository root.
+          sh '''
+            sed 's#^SF:#SF:backend/#' backend/coverage/lcov.info > backend/coverage/lcov-root.info
+            npx --yes @sonar/scan@5.0.0 \
+              -Dsonar.host.url="$SONAR_HOST_URL" \
+              -Dsonar.projectVersion="$IMAGE_TAG" \
+              -Dsonar.scm.revision="$GIT_COMMIT"
+          '''
+
+          // Wait for the result and fail the build if the quality gate fails.
+          sh 'sh scripts/sonar-quality-gate.sh'
         }
       }
     }

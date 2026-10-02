@@ -1,4 +1,6 @@
-# Starts Jenkins:  docker compose up -d --build     then open http://localhost:8083
+# Starts the CI tools:  docker compose up -d --build
+#   Jenkins    http://localhost:8083
+#   SonarQube  http://localhost:9000   (first start takes 1-2 minutes)
 name: eventtix-jenkins
 
 services:
@@ -16,6 +18,41 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock      # lets Jenkins control Docker Desktop
     restart: unless-stopped
 
+  # Code quality server. Jenkins reaches it as http://sonarqube:9000 on the shared network.
+  sonarqube:
+    image: sonarqube:26.9.0.129388-community
+    depends_on:
+      sonar-db:
+        condition: service_healthy
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://sonar-db:5432/sonar
+      SONAR_JDBC_USERNAME: sonar
+      SONAR_JDBC_PASSWORD: sonar     # the database below is only reachable from inside this Docker network
+      # Docker Desktop on Windows has a low memory-map limit; this stops SonarQube's search engine complaining.
+      SONAR_SEARCH_JAVAADDITIONALOPTS: -Dnode.store.allow_mmap=false
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_extensions:/opt/sonarqube/extensions
+      - sonarqube_logs:/opt/sonarqube/logs
+    ports:
+      - "9000:9000"
+    restart: unless-stopped
+
+  sonar-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sonar
+      POSTGRES_PASSWORD: sonar
+      POSTGRES_DB: sonar
+    volumes:
+      - sonar_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sonar -d sonar"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
 # Test databases started by the pipeline join this network so Jenkins can reach them.
 networks:
   default:
@@ -23,3 +60,7 @@ networks:
 
 volumes:
   jenkins_home:
+  sonarqube_data:
+  sonarqube_extensions:
+  sonarqube_logs:
+  sonar_db_data:
