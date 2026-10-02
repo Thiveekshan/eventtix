@@ -12,7 +12,9 @@ ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build
 
 # ---- Stage 2: serve it with nginx (runs as a non-root user, listens on 8080) ----
-FROM nginxinc/nginx-unprivileged:1.28-alpine
+# The maintained "stable" nginx line (1.30). The older 1.28 line is no longer rebuilt with
+# security updates, so its operating system packages go stale (found by the Security stage).
+FROM nginxinc/nginx-unprivileged:1.30-alpine
 
 ARG APP_VERSION=1.0.0
 LABEL org.opencontainers.image.title="eventtix-frontend" \
