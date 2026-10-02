@@ -12,6 +12,11 @@ pipeline {
     buildDiscarder(logRotator(numToKeepStr: '20'))
   }
 
+  parameters {
+    booleanParam(name: 'SIMULATE_BAD_RELEASE', defaultValue: false,
+                 description: 'DEMO ONLY: start the new version in STAGING with a missing secret, so the Deploy stage fails and rolls back automatically. Never touches production.')
+  }
+
   // Build trigger: check GitHub for new commits about every 2 minutes.
   triggers {
     pollSCM('H/2 * * * *')

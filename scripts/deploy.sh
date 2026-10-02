@@ -23,6 +23,10 @@ COMPOSE_FILE="deploy/docker-compose.yml"
 PROJECT="eventtix-$ENVIRONMENT"
 WAIT_SECONDS="${DEPLOY_WAIT_SECONDS:-180}"
 
+# Demo only: set SIMULATE_BAD_RELEASE=true to start the NEW version with a missing secret, so it genuinely
+# fails to start and the automatic rollback has to bring the previous version back. Staging only.
+SIMULATE_BAD_RELEASE="${SIMULATE_BAD_RELEASE:-false}"
+
 fail() {
   echo "ERROR: $*" >&2
   exit 1
@@ -34,8 +38,23 @@ fail() {
 
 # A private copy of the secrets with Windows line endings removed (files made in Notepad have them).
 SECRETS=$(mktemp)
-trap 'rm -f "$SECRETS"' EXIT
+FAULT_FILE=""
+trap 'rm -f "$SECRETS" "$FAULT_FILE"' EXIT
 tr -d '\r' < "$SECRETS_SOURCE" > "$SECRETS"
+
+if [ "$SIMULATE_BAD_RELEASE" = "true" ]; then
+  [ "$ENVIRONMENT" = "staging" ] || fail "a bad release is only ever simulated in staging, never in $ENVIRONMENT"
+  FAULT_FILE=$(mktemp)
+  cat > "$FAULT_FILE" <<'FAULT'
+services:
+  backend:
+    environment:
+      JWT_SECRET: ""
+FAULT
+  WAIT_SECONDS=75
+  echo "!! SIMULATION: the new version will start with its JWT secret missing, so it cannot boot."
+  echo "!! This is a staging-only demo of the automatic rollback."
+fi
 
 # Stop early, with a clear message, if a secret is missing or still a placeholder.
 for name in POSTGRES_PASSWORD JWT_SECRET ADMIN_EMAIL ADMIN_PASSWORD; do
@@ -51,7 +70,11 @@ SMOKE_MODE="${SMOKE_MODE:-full}"
 
 # docker compose with this environment's settings. Secrets come from the file, never from the command line.
 compose() {
-  docker compose -p "$PROJECT" --env-file "$CONFIG" --env-file "$SECRETS" -f "$COMPOSE_FILE" "$@"
+  if [ -n "$FAULT_FILE" ]; then
+    docker compose -p "$PROJECT" --env-file "$CONFIG" --env-file "$SECRETS" -f "$COMPOSE_FILE" -f "$FAULT_FILE" "$@"
+  else
+    docker compose -p "$PROJECT" --env-file "$CONFIG" --env-file "$SECRETS" -f "$COMPOSE_FILE" "$@"
+  fi
 }
 
 # The version currently running in this environment (empty on the very first deploy).
@@ -111,6 +134,7 @@ compose logs --tail 30 backend frontend >&2 || true
 if [ -n "$PREVIOUS" ] && [ "$PREVIOUS" != "$TAG" ]; then
   echo
   echo "== ROLLING BACK to version $PREVIOUS"
+  FAULT_FILE=""     # the previous version starts normally, without the simulated fault
   if start_version "$PREVIOUS" && smoke_test "$PREVIOUS"; then
     echo "ROLLED BACK: $ENVIRONMENT is running version $PREVIOUS again and is healthy" >&2
   else
